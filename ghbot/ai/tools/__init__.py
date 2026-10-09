@@ -12,7 +12,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from .context import ToolContext
-from . import terminal_tool, file_tools, web_tools, github_tool, todo_tool, session_tool, telegram_file_tool, telegram_download_tool
+from . import terminal_tool, file_tools, web_tools, github_tool, todo_tool, session_tool, telegram_file_tool, telegram_download_tool, receive_file
 from .. import memory as memory_mod
 from .. import skills as skills_mod
 
@@ -54,6 +54,7 @@ TOOLS: dict[str, tuple[dict, Handler]] = {
     "session_search": (session_tool.SCHEMA, session_tool.handle),
     "telegram_send_file": (telegram_file_tool.SCHEMA, telegram_file_tool.handle),
     "telegram_download_file": (telegram_download_tool.SCHEMA, telegram_download_tool.handle),
+    "receive_file": (receive_file.SCHEMA, receive_file.handle),
 }
 
 MAX_RESULT_CHARS = {"terminal": 30_000, "read_file": 40_000, "job_log": 12_000}

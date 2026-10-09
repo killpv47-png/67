@@ -11,13 +11,15 @@ import json
 import os
 import urllib.request
 import uuid
+from pathlib import Path
 
 from .context import ToolContext
 
 DESCRIPTION = (
-    "Send a file (ZIP, image, log, etc.) to the user's Telegram chat. Use when the user "
-    "wants a file delivered (e.g. a ZIP of repos, a log, a screenshot). path is the file "
-    "to send (absolute or workspace-relative). caption is optional short text."
+    "Send a file (ZIP, image, log, etc.) or a whole folder to the user's Telegram chat. "
+    "If path is a directory it is zipped first (into the workspace) and sent as a ZIP. "
+    "Use when the user wants a file delivered (e.g. a ZIP of repos, a log, a screenshot). "
+    "path is the file or folder to send (absolute or workspace-relative). caption is optional short text."
 )
 
 SCHEMA = {
@@ -26,7 +28,7 @@ SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Path to the file to send (absolute or workspace-relative)"},
+            "path": {"type": "string", "description": "Path to the file or folder to send (absolute or workspace-relative)"},
             "caption": {"type": "string", "description": "Optional caption text"},
         },
         "required": ["path"],
@@ -41,6 +43,22 @@ async def handle(ctx: ToolContext, args: dict) -> str:
     if not path:
         return json.dumps({"error": "path is required"})
     p = ctx.resolve(path)
+    if not p.exists():
+        return json.dumps({"error": f"not found: {p}"})
+
+    # directories are zipped first
+    if p.is_dir():
+        import shutil
+        import tempfile
+        ctx.workspace.mkdir(parents=True, exist_ok=True)
+        zname = p.name.rstrip("/") or "folder"
+        zpath = ctx.workspace / f"{zname}.zip"
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / zname
+            shutil.copytree(p, base)
+            shutil.make_archive(str(zpath.with_suffix("")), "zip", root_dir=td, base_dir=zname)
+        p = zpath
+
     if not p.is_file():
         return json.dumps({"error": f"not a file: {p}"})
     size = p.stat().st_size

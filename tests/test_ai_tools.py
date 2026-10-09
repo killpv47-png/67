@@ -103,6 +103,100 @@ async def test_telegram_download_file_validation(ctx):
     assert "no bot token" in r["error"]
 
 
+async def test_receive_file_validation_and_zip(ctx, monkeypatch):
+    import ghbot.ai.tools.receive_file as rf
+    # no file_id and no incoming file -> error
+    r = await run(ctx, "receive_file")
+    assert "no file_id" in r["error"]
+    # no token -> error
+    r = await run(ctx, "receive_file", file_id="abc")
+    assert "no bot token" in r["error"]
+
+    # fake a zip download
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("proj/README.md", "# Hello\n")
+        zf.writestr("proj/app.py", "print('hi')\n")
+        zf.writestr("proj/data.bin", b"\x00\x01\x02")
+    zbytes = buf.getvalue()
+
+    def fake_download(ctx, file_id):
+        return zbytes, "proj.zip"
+    monkeypatch.setattr(rf, "_download", fake_download)
+
+    r = await run(ctx, "receive_file", file_id="abc")
+    assert r["success"] and r["type"] == "zip"
+    assert r["file_count"] == 3
+    paths = [m["path"] for m in r["manifest"]]
+    assert "proj/README.md" in paths and "proj/app.py" in paths and "proj/data.bin" in paths
+    # previews only for text files
+    by_path = {m["path"]: m for m in r["manifest"]}
+    assert "preview" in by_path["proj/README.md"] and "preview" not in by_path["proj/data.bin"]
+    # extracted on disk
+    assert (ctx.workspace / "incoming" / "proj" / "app.py").exists()
+    # read a specific file
+    r2 = await run(ctx, "receive_file", file_id="abc", read="proj/app.py")
+    assert r2["read"] == "print('hi')\n"
+    # read a missing file -> error
+    r3 = await run(ctx, "receive_file", file_id="abc", read="nope.txt")
+    assert "not in ZIP" in r3["error"]
+
+
+async def test_receive_file_plain_document(ctx, monkeypatch):
+    import ghbot.ai.tools.receive_file as rf
+    monkeypatch.setattr(rf, "_download", lambda ctx, fid: (b"hello world", "note.txt"))
+    r = await run(ctx, "receive_file", file_id="abc")
+    assert r["success"] and r["type"] == "file"
+    assert (ctx.workspace / "note.txt").read_text() == "hello world"
+    assert "read_file" in r["hint"]
+
+
+async def test_telegram_send_file_zip_dir(ctx, monkeypatch):
+    import ghbot.ai.tools.telegram_file_tool as tft
+    # missing path
+    r = await run(ctx, "telegram_send_file")
+    assert "path is required" in r["error"]
+    # not found
+    r = await run(ctx, "telegram_send_file", path="nope.txt")
+    assert "not found" in r["error"]
+    # no token -> error
+    (ctx.workspace / "x.txt").write_text("hi")
+    r = await run(ctx, "telegram_send_file", path="x.txt")
+    assert "no bot token" in r["error"]
+
+    # fake sendDocument
+    sent = {}
+    def fake_urlopen(req, timeout=300):
+        import urllib.request
+        body = req.data
+        # extract filename from body
+        import re
+        m = re.search(rb'filename="([^"]+)"', body)
+        sent["name"] = m.group(1).decode() if m else "?"
+        sent["size"] = len(body)
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"ok":true,"result":{"document":{"file_name":"' + sent["name"].encode() + b'","file_size":1},"message_id":7}}'
+        return R()
+    monkeypatch.setattr(tft.urllib.request, "urlopen", fake_urlopen)
+    ctx.bot_token = "test-token"
+
+    # single file
+    (ctx.workspace / "a.txt").write_text("hello")
+    r = await run(ctx, "telegram_send_file", path="a.txt")
+    assert r["success"] and r["file_name"] == "a.txt"
+
+    # directory -> zipped
+    (ctx.workspace / "mydir").mkdir()
+    (ctx.workspace / "mydir" / "f1.txt").write_text("one")
+    (ctx.workspace / "mydir" / "f2.txt").write_text("two")
+    r = await run(ctx, "telegram_send_file", path="mydir")
+    assert r["success"] and r["file_name"] == "mydir.zip"
+    assert (ctx.workspace / "mydir.zip").exists()
+
+
 async def test_github_new_actions_need_token(ctx):
     for action, kwargs in [("create_pr", {"repo": "o/r", "title": "t", "head": "h", "base": "main"}),
                            ("create_release", {"repo": "o/r", "tag": "v1"}),
