@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime state (never commit — contains encrypted tokens / sessions)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+state.enc
+
+# Secrets
+.env
+.dev.vars
+
+# Node leftovers
+node_modules/
+dist/
+
+# Logs / backups
+*.log
+*.tar.gz
+*.zip
+
+# keep the template
+!.env.example

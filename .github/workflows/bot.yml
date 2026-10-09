@@ -1,0 +1,52 @@
+name: GitHub Control Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this run was started (manual / handoff)"
+        required: false
+        default: "manual"
+  schedule:
+    # Watchdog: if the bot is down (crash, dispatch failure), this brings it back.
+    # The concurrency group below means it is a no-op while a run is active.
+    - cron: "*/30 * * * *"
+
+# One bot at a time. A handoff-dispatched run waits here until the old run exits,
+# so Telegram never sees two pollers.  cancel-in-progress MUST stay false.
+concurrency:
+  group: ghbot-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          # GH_PAT: PAT with repo+workflow scope. Falls back to the run's GITHUB_TOKEN, which can push the
+          # state branch and (because the event is workflow_dispatch) start the next run as well.
+          GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || secrets.TAVILY }}
+          OWNER_IDS: ${{ vars.OWNER_IDS }}
+          MAX_RUN_MINUTES: ${{ vars.MAX_RUN_MINUTES || 330 }}
+          WORKFLOW_FILE: bot.yml
+          RUN_REASON: ${{ inputs.reason }}
+        run: python main.py
